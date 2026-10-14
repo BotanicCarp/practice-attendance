@@ -16,15 +16,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ROOT = Path(__file__).resolve().parent
-UPLOAD_DIR = ROOT / "private_uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
+# Vercel's deployment directory is read-only. /tmp is writable but ephemeral;
+# production photos must eventually move to private object storage.
+IS_VERCEL = bool(os.getenv("VERCEL"))
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/tmp/practice-attendance-uploads" if IS_VERCEL else str(ROOT / "private_uploads")))
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp"}
 
 app = Flask(__name__)
 # Never use a predictable fallback.  A missing key is acceptable only for a
 # local, ephemeral session; production deployments must provide SECRET_KEY.
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY") or secrets.token_urlsafe(48)
-db_url = os.getenv("DATABASE_URL", f"sqlite:///{(ROOT / 'instance' / 'attendance.db').as_posix()}")
+default_db_path = Path("/tmp/practice-attendance.db") if IS_VERCEL else (ROOT / "instance" / "attendance.db")
+db_url = os.getenv("DATABASE_URL", f"sqlite:///{default_db_path.as_posix()}")
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
