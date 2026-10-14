@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Мой кабинет — ПрактикаКонтроль{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><div class="eyebrow">ЛИЧНЫЙ КАБИНЕТ</div><h1>Здравствуйте, {{ current_user.full_name.split()[0] }}.</h1><p class="muted">Отметьте приход, когда прибудете на место практики.</p></div>
+  <div class="date-chip"><span class="date-dot"></span>{{ now.strftime('%d.%m.%Y') }} · время сервера UTC</div>
+</div>
+<div class="student-grid">
+  <section class="panel profile-panel">
+    <div class="section-label">ВАШ ПРОФИЛЬ</div>
+    <div class="profile-avatar">{{ current_user.full_name[:1]|upper }}</div>
+    <h2>{{ current_user.full_name }}</h2>
+    <p class="muted">{{ current_user.group_name or 'Группа не указана' }}</p>
+    <div class="profile-row"><span>Логин</span><strong>{{ current_user.username }}</strong></div>
+    <div class="profile-row"><span>Статус</span><strong class="status-pill status-ok">Активен</strong></div>
+  </section>
+  <section class="panel checkin-panel">
+    <div class="section-label">ЕЖЕДНЕВНАЯ ОТМЕТКА</div>
+    {% if today_record %}
+      <div class="checkin-success-icon">✓</div>
+      <h2>Вы уже отметились</h2>
+      <p class="muted">Сегодняшняя отметка сохранена в журнале.</p>
+      <div class="checkin-time">{{ today_record.checked_at.strftime('%H:%M:%S') }} <span>UTC</span></div>
+      <div class="success-banner">Отметка принята</div>
+    {% else %}
+      <div class="checkin-icon">⌖</div>
+      <h2>Отметить приход</h2>
+      <p class="muted">Разрешите доступ к местоположению, затем сфотографируйте или загрузите пропуск.</p>
+      <form id="attendance-form" method="post" action="{{ url_for('check_in') }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="latitude" id="latitude">
+        <input type="hidden" name="longitude" id="longitude">
+        <input type="hidden" name="accuracy" id="accuracy">
+        <label class="file-label" for="pass_photo"><span class="file-icon">↑</span><span><strong>Фотография пропуска</strong><small>JPG, PNG или WEBP · до 5 МБ</small></span></label>
+        <input class="file-input" id="pass_photo" name="pass_photo" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" required>
+        <div id="file-name" class="file-name">Файл не выбран</div>
+        <div id="location-status" class="location-status" role="status">Местоположение ещё не проверено</div>
+        <button id="checkin-button" class="btn btn-primary btn-full" type="button">Проверить место и отметить приход <span>→</span></button>
+        <p class="form-footnote">Нажимая кнопку, вы разрешаете использовать координаты для проверки присутствия на месте практики.</p>
+      </form>
+    {% endif %}
+  </section>
+</div>
+<section class="panel history-panel">
+  <div class="section-heading"><div><div class="section-label">ИСТОРИЯ</div><h2>Последние отметки</h2></div><span class="count-chip">{{ records|length }} записей</span></div>
+  {% if records %}
+  <div class="table-wrap"><table><thead><tr><th>Дата</th><th>Время (UTC)</th><th>Статус</th></tr></thead><tbody>
+    {% for r in records %}<tr><td>{{ r.attendance_date.strftime('%d.%m.%Y') }}</td><td class="time-cell">{{ r.checked_at.strftime('%H:%M:%S') }}</td><td><span class="status-pill status-ok">{{ r.status }}</span></td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<div class="empty-state"><div class="empty-icon">◷</div><strong>Пока нет отметок</strong><p>После первой отметки история появится здесь.</p></div>{% endif %}
+</section>
+<script src="{{ url_for('attendance_js') }}"></script>
+{% endblock %}
