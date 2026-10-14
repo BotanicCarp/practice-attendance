@@ -39,7 +39,8 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "0") == "1"
 
-(ROOT / "instance").mkdir(exist_ok=True)
+if not IS_VERCEL:
+    (ROOT / "instance").mkdir(parents=True, exist_ok=True)
 db = SQLAlchemy(app)
 csrf = CSRFProtect(app)
 login_manager = LoginManager(app)
