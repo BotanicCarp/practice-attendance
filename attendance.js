@@ -6,15 +6,26 @@
   const statusBox = document.getElementById("location-status");
   const fileInput = document.getElementById("pass_photo");
   const fileName = document.getElementById("file-name");
+  const preview = document.getElementById("pass-photo-preview");
 
   fileInput.addEventListener("change", () => {
     const file = fileInput.files[0];
     fileName.textContent = file ? `${file.name} (${(file.size / 1024 / 1024).toFixed(2)} МБ)` : "Файл не выбран";
+    if (preview) {
+      if (file && file.type.startsWith("image/")) {
+        preview.src = URL.createObjectURL(file);
+        preview.hidden = false;
+      } else {
+        preview.removeAttribute("src");
+        preview.hidden = true;
+      }
+    }
     if (file && file.size > 5 * 1024 * 1024) {
       statusBox.textContent = "Файл больше 5 МБ. Выберите фотографию меньшего размера.";
       statusBox.className = "location-status is-error";
       fileInput.value = "";
       fileName.textContent = "Файл не выбран";
+      if (preview) { preview.removeAttribute("src"); preview.hidden = true; }
     }
   });
 

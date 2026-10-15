@@ -1,35 +1,50 @@
 {% extends "base.html" %}
-{% block title %}Посещаемость — ПрактикаКонтроль{% endblock %}
+{% block title %}Панель администратора — ПрактикаКонтроль{% endblock %}
 {% block content %}
-<div class="page-heading">
-  <div><div class="eyebrow">ПАНЕЛЬ АДМИНИСТРАТОРА</div><h1>Посещаемость</h1><p class="muted">Контролируйте ежедневные отметки практикантов.</p></div>
-  <a class="btn btn-primary" href="{{ url_for('admin_users') }}">+ Практикант</a>
+<div class="page-heading admin-heading">
+  <div><div class="eyebrow">ПАНЕЛЬ УПРАВЛЕНИЯ</div><h1>Посещаемость</h1><p class="muted">Отметки, фотографии пропусков и контроль практикантов за выбранный день.</p></div>
+  <div class="heading-actions"><a class="btn btn-outline" href="{{ url_for('export_csv', date=chosen_date.isoformat()) }}">Экспорт CSV ↓</a><a class="btn btn-primary" href="{{ url_for('admin_users') }}">＋ Добавить практиканта</a></div>
 </div>
-<form class="date-filter panel" method="get" action="{{ url_for('admin_dashboard') }}">
-  <div><label for="date">Дата отчёта</label><input id="date" type="date" name="date" value="{{ chosen_date.isoformat() }}"></div>
-  <button class="btn btn-secondary" type="submit">Показать</button>
-  <a class="btn btn-outline" href="{{ url_for('export_csv', date=chosen_date.isoformat()) }}">Экспорт CSV ↓</a>
+<form class="filter-bar panel" method="get" action="{{ url_for('admin_dashboard') }}">
+  <div class="filter-field"><label for="date">Дата папки</label><input id="date" type="date" name="date" value="{{ chosen_date.isoformat() }}"></div>
+  <div class="filter-field filter-search"><label for="q">Поиск по ФИО, группе или номеру пропуска</label><input id="q" name="q" value="{{ search }}" placeholder="Например, 1023 или Иванов"></div>
+  <div class="filter-field"><label for="institution">Учебное заведение</label><select id="institution" name="institution"><option value="">Все учебные заведения</option>{% for item in institutions %}<option value="{{ item }}" {% if selected_institution == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select></div>
+  <button class="btn btn-primary" type="submit">Применить</button>
+  {% if search or selected_institution %}<a class="btn btn-outline" href="{{ url_for('admin_dashboard', date=chosen_date.isoformat()) }}">Сбросить</a>{% endif %}
 </form>
-<div class="stats-grid">
-  <div class="stat-card"><div class="stat-top"><span>Всего практикантов</span><span class="stat-symbol">◎</span></div><div class="stat-number">{{ students|length }}</div><div class="stat-caption">в системе</div></div>
+<div class="stats-grid stats-grid-admin">
+  <div class="stat-card"><div class="stat-top"><span>Практикантов в выборке</span><span class="stat-symbol">♙</span></div><div class="stat-number">{{ students|length }}</div><div class="stat-caption">аккаунты</div></div>
   <div class="stat-card"><div class="stat-top"><span>Отметились</span><span class="stat-symbol green">✓</span></div><div class="stat-number">{{ records|length }}</div><div class="stat-caption">за {{ chosen_date.strftime('%d.%m.%Y') }}</div></div>
-  <div class="stat-card"><div class="stat-top"><span>Нет отметки</span><span class="stat-symbol amber">◷</span></div><div class="stat-number">{{ missing|length }}</div><div class="stat-caption">не отметились в выбранную дату</div></div>
+  <div class="stat-card"><div class="stat-top"><span>Нет отметки</span><span class="stat-symbol amber">◷</span></div><div class="stat-number">{{ missing|length }}</div><div class="stat-caption">нет записи за выбранную дату</div></div>
 </div>
-<section class="panel history-panel">
-  <div class="section-heading"><div><div class="section-label">ЖУРНАЛ</div><h2>Отметки за {{ chosen_date.strftime('%d.%m.%Y') }}</h2></div><span class="count-chip">{{ records|length }} отметок</span></div>
+<section class="panel gallery-panel">
+  <div class="section-heading"><div><div class="section-label">ПАПКА ДНЯ</div><h2>Фото пропусков — {{ chosen_date.strftime('%d.%m.%Y') }}</h2><p class="muted section-subtitle">Каждая карточка связана с ФИО практиканта и цифровым номером пропуска.</p></div><span class="count-chip">{{ records|length }} фото</span></div>
   {% if records %}
-  <div class="table-wrap"><table><thead><tr><th>Практикант</th><th>Группа</th><th>Время (UTC)</th><th>GPS точность</th><th>Фото пропуска</th><th>Статус</th></tr></thead><tbody>
+  <div class="pass-gallery">
     {% for r in records %}
-    <tr><td><div class="person-cell"><span class="table-avatar">{{ r.user.full_name[:1]|upper }}</span><strong>{{ r.user.full_name }}</strong></div></td><td>{{ r.user.group_name or '—' }}</td><td class="time-cell">{{ r.checked_at.strftime('%H:%M:%S') }}</td><td>{{ '%.0f'|format(r.accuracy_m) }} м</td><td><a class="table-link" href="{{ url_for('attendance_photo', attendance_id=r.id) }}">Скачать фото ↗</a></td><td><span class="status-pill status-ok">{{ r.status }}</span></td></tr>
+    <article class="pass-card">
+      <a class="pass-photo-link" href="{{ url_for('attendance_photo_preview', attendance_id=r.id) }}" target="_blank" rel="noopener" aria-label="Открыть фото пропуска {{ r.user.pass_number or 'без номера' }}">
+        <img class="pass-photo" src="{{ url_for('attendance_photo_preview', attendance_id=r.id) }}" alt="Фото пропуска № {{ r.user.pass_number or 'не указан' }}" loading="lazy">
+      </a>
+      <div class="pass-card-info"><div class="pass-number-label">ПРОПУСК №</div><div class="pass-number">{{ r.user.pass_number or 'Не указан' }}</div><strong class="pass-person">{{ r.user.full_name }}</strong><span class="pass-school">{{ r.user.educational_institution or 'Учебное заведение не указано' }}</span><div class="pass-meta"><span class="status-dot"></span>{{ r.checked_at.strftime('%H:%M:%S') }} <span class="muted">· {{ r.user.group_name or 'Без группы' }}</span></div></div>
+      <div class="pass-card-actions"><a class="text-button" href="{{ url_for('attendance_photo', attendance_id=r.id) }}">Скачать фото ↓</a><span class="status-pill status-ok">{{ r.status }}</span></div>
+    </article>
     {% endfor %}
+  </div>
+  {% else %}<div class="empty-state"><div class="empty-icon">▧</div><strong>В этой папке пока нет фотографий</strong><p>Фотографии появятся здесь после успешных отметок практикантов.</p></div>{% endif %}
+</section>
+<section class="panel history-panel">
+  <div class="section-heading"><div><div class="section-label">ЖУРНАЛ</div><h2>Журнал посещаемости</h2></div><span class="count-chip">{{ records|length }} записей</span></div>
+  {% if records %}
+  <div class="table-wrap"><table><thead><tr><th>№ пропуска</th><th>ФИО практиканта</th><th>Учебное заведение</th><th>Группа</th><th>Время (UTC)</th><th>GPS</th><th>Статус</th><th>Фото</th></tr></thead><tbody>
+  {% for r in records %}<tr><td><span class="number-chip">{{ r.user.pass_number or '—' }}</span></td><td><div class="person-cell"><span class="table-avatar">{{ r.user.full_name[:1]|upper }}</span><strong>{{ r.user.full_name }}</strong></div></td><td class="school-cell">{{ r.user.educational_institution or '—' }}</td><td>{{ r.user.group_name or '—' }}</td><td class="time-cell">{{ r.checked_at.strftime('%H:%M:%S') }}</td><td>{{ '%.0f'|format(r.accuracy_m) }} м</td><td><span class="status-pill status-ok">{{ r.status }}</span></td><td><a class="table-link" href="{{ url_for('attendance_photo', attendance_id=r.id) }}">Скачать ↓</a></td></tr>{% endfor %}
   </tbody></table></div>
-  {% else %}<div class="empty-state"><div class="empty-icon">◷</div><strong>Нет отметок за выбранную дату</strong><p>Когда практиканты отметятся, записи появятся здесь.</p></div>{% endif %}
+  {% else %}<div class="empty-state compact"><strong>Нет записей для выбранных фильтров</strong><p>Измените дату или сбросьте поиск.</p></div>{% endif %}
 </section>
 <section class="panel history-panel">
   <div class="section-heading"><div><div class="section-label">ТРЕБУЕТ ВНИМАНИЯ</div><h2>Нет отметки</h2></div><span class="count-chip">{{ missing|length }} человек</span></div>
-  {% if missing %}
-  <div class="missing-list">{% for s in missing %}<div class="missing-item"><span class="table-avatar muted-avatar">{{ s.full_name[:1]|upper }}</span><div><strong>{{ s.full_name }}</strong><small>{{ s.group_name or 'Группа не указана' }}</small></div><span class="status-pill status-warn">Нет отметки</span></div>{% endfor %}</div>
-  {% else %}<div class="empty-state compact"><strong>Все активные практиканты отметились</strong></div>{% endif %}
-  <p class="form-footnote">«Нет отметки» означает отсутствие записи, а не подтверждённое отсутствие человека. Учитывайте выходные, график и отпуск.</p>
+  {% if missing %}<div class="missing-list">{% for s in missing %}<div class="missing-item"><span class="table-avatar muted-avatar">{{ s.full_name[:1]|upper }}</span><div class="missing-main"><strong>{{ s.full_name }}</strong><small>Пропуск № {{ s.pass_number or 'не указан' }} · {{ s.educational_institution or 'Учебное заведение не указано' }} · {{ s.group_name or 'Без группы' }}</small></div><span class="status-pill status-warn">Нет отметки</span></div>{% endfor %}</div>
+  {% else %}<div class="empty-state compact"><strong>Все практиканты в текущей выборке отметились</strong></div>{% endif %}
+  <p class="form-footnote">«Нет отметки» означает отсутствие записи в системе, а не подтверждённое отсутствие человека.</p>
 </section>
 {% endblock %}

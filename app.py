@@ -6,6 +6,7 @@ from math import isfinite
 from pathlib import Path
 
 from flask import Flask, render_template, request, redirect, url_for, flash, abort, jsonify
+from sqlalchemy import inspect, text
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf.csrf import CSRFProtect
@@ -50,12 +51,24 @@ LOGIN_FAILURES = {}
 LOGIN_WINDOW = timedelta(minutes=15)
 MAX_LOGIN_FAILURES = 5
 
+# The registration form uses a controlled list instead of free-text entry.
+EDUCATIONAL_INSTITUTIONS = [
+    "Карагандинский высший политехнический колледж",
+    "Темиртауский индустриальный колледж",
+    "Карагандинский технический университет",
+    "Карагандинский университет Казпотребсоюза",
+    "Колледж экономики и статистики",
+    "Другое учебное заведение",
+]
+
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False, index=True)
     full_name = db.Column(db.String(160), nullable=False)
     group_name = db.Column(db.String(100), nullable=True)
+    educational_institution = db.Column(db.String(200), nullable=True)
+    pass_number = db.Column(db.String(20), nullable=True, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False, default="student")
     active = db.Column(db.Boolean, nullable=False, default=True)
@@ -134,8 +147,6 @@ def parse_location(data):
         lat = float(data["latitude"])
         lon = float(data["longitude"])
         accuracy = float(data["accuracy"])
-        if not parse_location(data):
-            raise ValueError
     except (KeyError, TypeError, ValueError):
         return None
     if not all(isfinite(value) for value in (lat, lon, accuracy)):
@@ -220,17 +231,20 @@ def login():
         return redirect(url_for("admin_dashboard" if current_user.role == "admin" else "student_dashboard"))
     if request.method == "POST":
         remote_addr = request.remote_addr or "unknown"
-        if login_is_limited(remote_addr):
-            flash("Слишком много попыток входа. Повторите попытку через 15 минут.", "danger")
-            return render_template("login.html"), 429
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
+        # Scope the temporary rate limit to IP + username, so one user's typos
+        # do not lock every account behind the same serverless proxy address.
+        rate_key = f"{remote_addr}:{username.casefold()}"
+        if login_is_limited(rate_key):
+            flash("Слишком много попыток входа для этого логина. Подождите 15 минут.", "danger")
+            return render_template("login.html"), 429
         user = User.query.filter_by(username=username, active=True).first()
         if user and user.check_password(password):
-            LOGIN_FAILURES.pop(remote_addr, None)
+            LOGIN_FAILURES.pop(rate_key, None)
             login_user(user)
             return redirect(url_for("admin_dashboard" if user.role == "admin" else "student_dashboard"))
-        record_login_failure(remote_addr)
+        record_login_failure(rate_key)
         flash("Неверный логин или пароль.", "danger")
     return render_template("login.html")
 
@@ -368,11 +382,32 @@ def admin_dashboard():
         chosen_date = date.fromisoformat(selected_date)
     except ValueError:
         chosen_date = date.today()
+
+    search = request.args.get("q", "").strip()
+    institution = request.args.get("institution", "").strip()
     records = Attendance.query.filter_by(attendance_date=chosen_date).order_by(Attendance.checked_at.desc()).all()
     students = User.query.filter_by(role="student").order_by(User.full_name.asc()).all()
+
+    if institution:
+        records = [r for r in records if r.user.educational_institution == institution]
+        students = [s for s in students if s.educational_institution == institution]
+    if search:
+        needle = search.casefold()
+        records = [r for r in records if needle in r.user.full_name.casefold()
+                   or needle in (r.user.pass_number or "").casefold()
+                   or needle in (r.user.group_name or "").casefold()]
+        students = [s for s in students if needle in s.full_name.casefold()
+                    or needle in (s.pass_number or "").casefold()
+                    or needle in (s.group_name or "").casefold()]
+
     marked_ids = {r.user_id for r in records}
     missing = [s for s in students if s.active and s.id not in marked_ids]
-    return render_template("admin_dashboard.html", records=records, students=students, missing=missing, chosen_date=chosen_date)
+    all_active_students = User.query.filter_by(role="student", active=True).count()
+    return render_template(
+        "admin_dashboard.html", records=records, students=students, missing=missing,
+        chosen_date=chosen_date, search=search, selected_institution=institution,
+        institutions=EDUCATIONAL_INSTITUTIONS, all_active_students=all_active_students,
+    )
 
 
 @app.route("/admin/users", methods=["GET", "POST"])
@@ -382,20 +417,62 @@ def admin_users():
         username = request.form.get("username", "").strip()
         full_name = request.form.get("full_name", "").strip()
         group_name = request.form.get("group_name", "").strip()
+        institution = request.form.get("educational_institution", "").strip()
+        pass_number = request.form.get("pass_number", "").strip()
         password = request.form.get("password", "")
-        if not username or not full_name or len(password) < 10:
-            flash("Заполните логин и ФИО; пароль должен содержать минимум 10 символов.", "danger")
+
+        if not username or not full_name or not institution or not pass_number or len(password) < 10:
+            flash("Заполните ФИО, логин, учебное заведение и номер пропуска; пароль должен содержать минимум 10 символов.", "danger")
+        elif institution not in EDUCATIONAL_INSTITUTIONS:
+            flash("Выберите учебное заведение из списка.", "danger")
+        elif not pass_number.isdigit() or len(pass_number) > 20:
+            flash("Номер пропуска должен содержать только цифры.", "danger")
         elif User.query.filter_by(username=username).first():
             flash("Такой логин уже существует.", "danger")
+        elif User.query.filter_by(pass_number=pass_number).first():
+            flash("Такой номер пропуска уже используется.", "danger")
         else:
-            user = User(username=username, full_name=full_name, group_name=group_name, role="student")
+            user = User(
+                username=username, full_name=full_name, group_name=group_name or None,
+                educational_institution=institution, pass_number=pass_number, role="student",
+            )
             user.set_password(password)
             db.session.add(user)
             db.session.commit()
             flash("Аккаунт практиканта создан.", "success")
             return redirect(url_for("admin_users"))
     users = User.query.filter_by(role="student").order_by(User.full_name.asc()).all()
-    return render_template("admin_users.html", users=users)
+    return render_template("admin_users.html", users=users, institutions=EDUCATIONAL_INSTITUTIONS)
+
+
+@app.route("/admin/users/<int:user_id>/edit", methods=["GET", "POST"])
+@admin_required
+def edit_user(user_id):
+    user = db.session.get(User, user_id)
+    if not user or user.role != "student":
+        abort(404)
+    if request.method == "POST":
+        full_name = request.form.get("full_name", "").strip()
+        group_name = request.form.get("group_name", "").strip()
+        institution = request.form.get("educational_institution", "").strip()
+        pass_number = request.form.get("pass_number", "").strip()
+        if not full_name or not institution or not pass_number:
+            flash("Заполните ФИО, учебное заведение и номер пропуска.", "danger")
+        elif institution not in EDUCATIONAL_INSTITUTIONS:
+            flash("Выберите учебное заведение из списка.", "danger")
+        elif not pass_number.isdigit() or len(pass_number) > 20:
+            flash("Номер пропуска должен содержать только цифры.", "danger")
+        elif User.query.filter(User.pass_number == pass_number, User.id != user.id).first():
+            flash("Такой номер пропуска уже используется.", "danger")
+        else:
+            user.full_name = full_name
+            user.group_name = group_name or None
+            user.educational_institution = institution
+            user.pass_number = pass_number
+            db.session.commit()
+            flash("Данные практиканта обновлены.", "success")
+            return redirect(url_for("admin_users"))
+    return render_template("admin_user_edit.html", user=user, institutions=EDUCATIONAL_INSTITUTIONS)
 
 
 @app.route("/admin/users/<int:user_id>/toggle", methods=["POST"])
@@ -408,6 +485,21 @@ def toggle_user(user_id):
     db.session.commit()
     flash("Статус аккаунта изменён.", "success")
     return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/attendance/<int:attendance_id>/preview")
+@admin_required
+def attendance_photo_preview(attendance_id):
+    from flask import send_file
+    record = db.session.get(Attendance, attendance_id)
+    if not record:
+        abort(404)
+    photo_path = UPLOAD_DIR / record.photo_name
+    if not photo_path.exists():
+        abort(404)
+    suffix = photo_path.suffix.lower()
+    mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}.get(suffix, "application/octet-stream")
+    return send_file(photo_path, mimetype=mime, as_attachment=False, download_name=record.photo_name)
 
 
 @app.route("/admin/attendance/<int:attendance_id>/photo")
@@ -436,29 +528,60 @@ def export_csv():
         chosen_date = date.today()
     output = StringIO()
     writer = csv.writer(output, delimiter=";")
-    writer.writerow(["ФИО", "Группа", "Дата", "Время UTC", "Широта", "Долгота", "Точность GPS, м", "Статус"])
+    writer.writerow(["ФИО", "Номер пропуска", "Учебное заведение", "Группа", "Дата", "Время UTC", "Широта", "Долгота", "Точность GPS, м", "Статус"])
     records = Attendance.query.filter_by(attendance_date=chosen_date).order_by(Attendance.checked_at.asc()).all()
     for r in records:
-        writer.writerow([r.user.full_name, r.user.group_name or "", r.attendance_date.isoformat(), r.checked_at.strftime("%H:%M:%S"), r.latitude, r.longitude, r.accuracy_m, r.status])
+        writer.writerow([r.user.full_name, r.user.pass_number or "", r.user.educational_institution or "", r.user.group_name or "", r.attendance_date.isoformat(), r.checked_at.strftime("%H:%M:%S"), r.latitude, r.longitude, r.accuracy_m, r.status])
     return Response("\ufeff" + output.getvalue(), mimetype="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f"attachment; filename=attendance_{chosen_date.isoformat()}.csv"})
 
 
 def create_initial_admin():
+    """Create or synchronize the configured bootstrap administrator.
+
+    On Vercel, SQLite is currently ephemeral, so the environment variables are
+    the bootstrap source of truth until a persistent PostgreSQL database is set.
+    """
     username = os.getenv("INITIAL_ADMIN_USERNAME", "").strip()
     password = os.getenv("INITIAL_ADMIN_PASSWORD", "")
     if not username or not password:
+        app.logger.warning("Initial admin not configured: set INITIAL_ADMIN_USERNAME and INITIAL_ADMIN_PASSWORD.")
         return
-    existing = User.query.filter_by(username=username).first()
-    if not existing:
-        admin = User(username=username, full_name=os.getenv("INITIAL_ADMIN_NAME", "Администратор"), role="admin")
-        admin.set_password(password)
+
+    full_name = os.getenv("INITIAL_ADMIN_NAME", "Администратор").strip() or "Администратор"
+    admin = User.query.filter_by(username=username).first()
+    if admin is None:
+        admin = User(username=username, full_name=full_name, role="admin")
         db.session.add(admin)
-        db.session.commit()
+
+    # Keep the configured bootstrap account usable if it already existed with
+    # an old password or a non-admin role. The Vercel env password is canonical.
+    admin.full_name = full_name
+    admin.role = "admin"
+    admin.active = True
+    admin.set_password(password)
+    db.session.commit()
+
+
+def migrate_schema():
+    """Add new profile fields to existing databases without deleting records."""
+    inspector = inspect(db.engine)
+    if "user" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("user")}
+    additions = {
+        "educational_institution": "VARCHAR(200)",
+        "pass_number": "VARCHAR(20)",
+    }
+    with db.engine.begin() as connection:
+        for name, sql_type in additions.items():
+            if name not in columns:
+                connection.execute(text(f'ALTER TABLE "user" ADD COLUMN {name} {sql_type}'))
 
 
 with app.app_context():
     db.create_all()
+    migrate_schema()
     create_initial_admin()
 
 
