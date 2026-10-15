@@ -52,13 +52,12 @@ LOGIN_WINDOW = timedelta(minutes=15)
 MAX_LOGIN_FAILURES = 5
 
 # The registration form uses a controlled list instead of free-text entry.
-EDUCATIONAL_INSTITUTIONS = [
+DEFAULT_INSTITUTIONS = [
     "Карагандинский высший политехнический колледж",
     "Темиртауский индустриальный колледж",
     "Карагандинский технический университет",
     "Карагандинский университет Казпотребсоюза",
     "Колледж экономики и статистики",
-    "Другое учебное заведение",
 ]
 
 
@@ -94,10 +93,51 @@ class Attendance(db.Model):
     latitude = db.Column(db.Float, nullable=False)
     longitude = db.Column(db.Float, nullable=False)
     accuracy_m = db.Column(db.Float, nullable=False)
+    pass_number = db.Column(db.String(20), nullable=False, default="")
     photo_name = db.Column(db.String(255), nullable=False)
     status = db.Column(db.String(30), nullable=False, default="Присутствует")
     user = db.relationship("User", backref=db.backref("attendance_records", lazy=True))
     __table_args__ = (db.UniqueConstraint("user_id", "attendance_date", name="unique_daily_attendance"),)
+
+
+class EducationalInstitution(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), unique=True, nullable=False)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AppSetting(db.Model):
+    key = db.Column(db.String(80), primary_key=True)
+    value = db.Column(db.String(500), nullable=False)
+
+
+class Poll(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.String(1000), nullable=True)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    creator = db.relationship("User")
+
+
+class PollOption(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    poll_id = db.Column(db.Integer, db.ForeignKey("poll.id", ondelete="CASCADE"), nullable=False, index=True)
+    label = db.Column(db.String(200), nullable=False)
+    poll = db.relationship("Poll", backref=db.backref("options", cascade="all, delete-orphan", lazy=True))
+
+
+class PollVote(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    poll_id = db.Column(db.Integer, db.ForeignKey("poll.id", ondelete="CASCADE"), nullable=False, index=True)
+    option_id = db.Column(db.Integer, db.ForeignKey("poll_option.id", ondelete="CASCADE"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    option = db.relationship("PollOption")
+    user = db.relationship("User")
+    __table_args__ = (db.UniqueConstraint("poll_id", "user_id", name="unique_poll_vote"),)
 
 
 class AuditLog(db.Model):
@@ -156,14 +196,26 @@ def parse_location(data):
     return lat, lon, accuracy
 
 
+def setting_value(key, fallback=None):
+    row = db.session.get(AppSetting, key)
+    return row.value if row else fallback
+
+
+def institution_names(active_only=True):
+    all_rows = EducationalInstitution.query.order_by(EducationalInstitution.name.asc()).all()
+    if not all_rows:
+        return DEFAULT_INSTITUTIONS
+    return [row.name for row in all_rows if row.active or not active_only]
+
+
 def practice_settings():
-    """Read and validate the location settings used by both check-in endpoints."""
+    """Prefer administrator-saved coordinates; env vars are a fallback."""
     try:
-        lat = float(os.environ["PRACTICE_LAT"])
-        lon = float(os.environ["PRACTICE_LON"])
-        radius = float(os.getenv("PRACTICE_RADIUS_M", "100"))
+        lat = float(setting_value("PRACTICE_LAT", os.getenv("PRACTICE_LAT", "")))
+        lon = float(setting_value("PRACTICE_LON", os.getenv("PRACTICE_LON", "")))
+        radius = float(setting_value("PRACTICE_RADIUS_M", os.getenv("PRACTICE_RADIUS_M", "100")))
         max_accuracy = float(os.getenv("MAX_GPS_ACCURACY_M", "100"))
-    except (KeyError, ValueError):
+    except (TypeError, ValueError):
         return None
     if not all(isfinite(value) for value in (lat, lon, radius, max_accuracy)):
         return None
@@ -283,7 +335,7 @@ def location_check():
         return jsonify(ok=False, message="Не удалось получить координаты. Разрешите доступ к геолокации."), 400
 
     # Location must be configured by the administrator before check-in is enabled.
-    if os.getenv("PRACTICE_LAT") is None or os.getenv("PRACTICE_LON") is None:
+    if not practice_settings():
         return jsonify(ok=False, message="Администратор ещё не настроил координаты места практики."), 503
 
     settings = practice_settings()
@@ -318,7 +370,7 @@ def check_in():
         flash("Не удалось получить геолокацию. Разрешите доступ к местоположению и повторите попытку.", "danger")
         return redirect(url_for("student_dashboard"))
 
-    if os.getenv("PRACTICE_LAT") is None or os.getenv("PRACTICE_LON") is None:
+    if not practice_settings():
         flash("Администратор ещё не настроил координаты места практики.", "danger")
         return redirect(url_for("student_dashboard"))
 
@@ -335,6 +387,10 @@ def check_in():
         flash(f"Отметка отклонена: вы за пределами зоны практики (примерно {distance:.0f} м).", "danger")
         return redirect(url_for("student_dashboard"))
 
+    pass_number = request.form.get("pass_number", "").strip()
+    if not pass_number.isdigit() or len(pass_number) > 20:
+        flash("Введите номер пропуска, состоящий только из цифр.", "danger")
+        return redirect(url_for("student_dashboard"))
     photo = request.files.get("pass_photo")
     if not photo or not photo.filename or not allowed_file(photo.filename):
         flash("Загрузите фотографию пропуска в формате JPG, PNG или WEBP.", "danger")
@@ -358,6 +414,7 @@ def check_in():
             latitude=lat,
             longitude=lon,
             accuracy_m=accuracy,
+            pass_number=pass_number,
             photo_name=stored_name,
             status="Присутствует",
         )
@@ -394,10 +451,9 @@ def admin_dashboard():
     if search:
         needle = search.casefold()
         records = [r for r in records if needle in r.user.full_name.casefold()
-                   or needle in (r.user.pass_number or "").casefold()
+                   or needle in (r.pass_number or "").casefold()
                    or needle in (r.user.group_name or "").casefold()]
         students = [s for s in students if needle in s.full_name.casefold()
-                    or needle in (s.pass_number or "").casefold()
                     or needle in (s.group_name or "").casefold()]
 
     marked_ids = {r.user_id for r in records}
@@ -406,43 +462,36 @@ def admin_dashboard():
     return render_template(
         "admin_dashboard.html", records=records, students=students, missing=missing,
         chosen_date=chosen_date, search=search, selected_institution=institution,
-        institutions=EDUCATIONAL_INSTITUTIONS, all_active_students=all_active_students,
+        institutions=institution_names(), all_active_students=all_active_students,
     )
 
 
 @app.route("/admin/users", methods=["GET", "POST"])
 @admin_required
 def admin_users():
+    institutions = institution_names()
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         full_name = request.form.get("full_name", "").strip()
         group_name = request.form.get("group_name", "").strip()
         institution = request.form.get("educational_institution", "").strip()
-        pass_number = request.form.get("pass_number", "").strip()
         password = request.form.get("password", "")
-
-        if not username or not full_name or not institution or not pass_number or len(password) < 10:
-            flash("Заполните ФИО, логин, учебное заведение и номер пропуска; пароль должен содержать минимум 10 символов.", "danger")
-        elif institution not in EDUCATIONAL_INSTITUTIONS:
+        if not username or not full_name or not institution or len(password) < 10:
+            flash("Заполните ФИО, логин и учебное заведение; пароль должен содержать минимум 10 символов.", "danger")
+        elif institution not in institutions:
             flash("Выберите учебное заведение из списка.", "danger")
-        elif not pass_number.isdigit() or len(pass_number) > 20:
-            flash("Номер пропуска должен содержать только цифры.", "danger")
         elif User.query.filter_by(username=username).first():
             flash("Такой логин уже существует.", "danger")
-        elif User.query.filter_by(pass_number=pass_number).first():
-            flash("Такой номер пропуска уже используется.", "danger")
         else:
-            user = User(
-                username=username, full_name=full_name, group_name=group_name or None,
-                educational_institution=institution, pass_number=pass_number, role="student",
-            )
+            user = User(username=username, full_name=full_name, group_name=group_name or None,
+                        educational_institution=institution, role="student")
             user.set_password(password)
             db.session.add(user)
             db.session.commit()
             flash("Аккаунт практиканта создан.", "success")
             return redirect(url_for("admin_users"))
     users = User.query.filter_by(role="student").order_by(User.full_name.asc()).all()
-    return render_template("admin_users.html", users=users, institutions=EDUCATIONAL_INSTITUTIONS)
+    return render_template("admin_users.html", users=users, institutions=institutions)
 
 
 @app.route("/admin/users/<int:user_id>/edit", methods=["GET", "POST"])
@@ -451,29 +500,157 @@ def edit_user(user_id):
     user = db.session.get(User, user_id)
     if not user or user.role != "student":
         abort(404)
+    institutions = institution_names()
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
         group_name = request.form.get("group_name", "").strip()
         institution = request.form.get("educational_institution", "").strip()
-        pass_number = request.form.get("pass_number", "").strip()
-        if not full_name or not institution or not pass_number:
-            flash("Заполните ФИО, учебное заведение и номер пропуска.", "danger")
-        elif institution not in EDUCATIONAL_INSTITUTIONS:
+        if not full_name or not institution:
+            flash("Заполните ФИО и учебное заведение.", "danger")
+        elif institution not in institutions:
             flash("Выберите учебное заведение из списка.", "danger")
-        elif not pass_number.isdigit() or len(pass_number) > 20:
-            flash("Номер пропуска должен содержать только цифры.", "danger")
-        elif User.query.filter(User.pass_number == pass_number, User.id != user.id).first():
-            flash("Такой номер пропуска уже используется.", "danger")
         else:
             user.full_name = full_name
             user.group_name = group_name or None
             user.educational_institution = institution
-            user.pass_number = pass_number
             db.session.commit()
             flash("Данные практиканта обновлены.", "success")
             return redirect(url_for("admin_users"))
-    return render_template("admin_user_edit.html", user=user, institutions=EDUCATIONAL_INSTITUTIONS)
+    return render_template("admin_user_edit.html", user=user, institutions=institutions)
 
+
+@app.route("/admin/institutions", methods=["GET", "POST"])
+@admin_required
+def admin_institutions():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        if not name or len(name) > 200:
+            flash("Введите название учебного заведения (до 200 символов).", "danger")
+        elif EducationalInstitution.query.filter_by(name=name).first():
+            flash("Такое учебное заведение уже есть в списке.", "warning")
+        else:
+            db.session.add(EducationalInstitution(name=name))
+            db.session.commit()
+            flash("Учебное заведение добавлено.", "success")
+            return redirect(url_for("admin_institutions"))
+    schools = EducationalInstitution.query.order_by(EducationalInstitution.name.asc()).all()
+    return render_template("admin_institutions.html", schools=schools)
+
+
+@app.route("/admin/institutions/<int:school_id>/toggle", methods=["POST"])
+@admin_required
+def toggle_institution(school_id):
+    school = db.session.get(EducationalInstitution, school_id)
+    if not school:
+        abort(404)
+    school.active = not school.active
+    db.session.commit()
+    flash("Статус учебного заведения изменён.", "success")
+    return redirect(url_for("admin_institutions"))
+
+
+@app.route("/admin/location", methods=["GET", "POST"])
+@admin_required
+def admin_location():
+    if request.method == "POST":
+        try:
+            lat = float(request.form.get("latitude", ""))
+            lon = float(request.form.get("longitude", ""))
+            radius = float(request.form.get("radius_m", "100"))
+            if not all(isfinite(v) for v in (lat, lon, radius)) or not (-90 <= lat <= 90) or not (-180 <= lon <= 180) or radius <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            flash("Проверьте координаты и радиус зоны.", "danger")
+        else:
+            for key, value in {"PRACTICE_LAT": str(lat), "PRACTICE_LON": str(lon), "PRACTICE_RADIUS_M": str(radius)}.items():
+                row = db.session.get(AppSetting, key)
+                if row is None:
+                    row = AppSetting(key=key, value=value)
+                    db.session.add(row)
+                else:
+                    row.value = value
+            db.session.commit()
+            flash("Место практики сохранено.", "success")
+            return redirect(url_for("admin_location"))
+    lat = setting_value("PRACTICE_LAT", os.getenv("PRACTICE_LAT", ""))
+    lon = setting_value("PRACTICE_LON", os.getenv("PRACTICE_LON", ""))
+    radius = setting_value("PRACTICE_RADIUS_M", os.getenv("PRACTICE_RADIUS_M", "100"))
+    latest_records = Attendance.query.order_by(Attendance.checked_at.desc()).all()
+    latest_by_user = {}
+    for record in latest_records:
+        if record.user_id not in latest_by_user:
+            latest_by_user[record.user_id] = record
+    map_students = [{"name": r.user.full_name, "group": r.user.group_name or "", "lat": r.latitude,
+                     "lon": r.longitude, "date": r.attendance_date.isoformat(), "time": r.checked_at.strftime("%H:%M:%S"),
+                     "institution": r.user.educational_institution or ""} for r in latest_by_user.values()]
+    return render_template("admin_location.html", latitude=lat, longitude=lon, radius=radius, map_students=map_students)
+
+
+@app.route("/admin/polls", methods=["GET", "POST"])
+@admin_required
+def admin_polls():
+    if request.method == "POST":
+        title = request.form.get("title", "").strip()
+        description = request.form.get("description", "").strip()
+        options = [line.strip() for line in request.form.get("options", "").splitlines() if line.strip()]
+        if not title or len(options) < 2:
+            flash("Укажите вопрос и минимум два варианта ответа (каждый с новой строки).", "danger")
+        else:
+            poll = Poll(title=title, description=description or None, created_by=current_user.id)
+            for label in options[:20]:
+                poll.options.append(PollOption(label=label[:200]))
+            db.session.add(poll)
+            db.session.commit()
+            flash("Опрос создан и опубликован.", "success")
+            return redirect(url_for("admin_polls"))
+    polls = Poll.query.order_by(Poll.created_at.desc()).all()
+    results = {}
+    for poll in polls:
+        results[poll.id] = {option.id: PollVote.query.filter_by(poll_id=poll.id, option_id=option.id).count() for option in poll.options}
+    return render_template("admin_polls.html", polls=polls, results=results)
+
+
+@app.route("/admin/polls/<int:poll_id>/toggle", methods=["POST"])
+@admin_required
+def toggle_poll(poll_id):
+    poll = db.session.get(Poll, poll_id)
+    if not poll:
+        abort(404)
+    poll.active = not poll.active
+    db.session.commit()
+    flash("Статус опроса изменён.", "success")
+    return redirect(url_for("admin_polls"))
+
+
+@app.route("/polls", methods=["GET"])
+@login_required
+def polls_page():
+    polls = Poll.query.filter_by(active=True).order_by(Poll.created_at.desc()).all()
+    voted = {v.poll_id for v in PollVote.query.filter_by(user_id=current_user.id).all()}
+    results = {poll.id: {option.id: PollVote.query.filter_by(poll_id=poll.id, option_id=option.id).count() for option in poll.options} for poll in polls}
+    return render_template("polls.html", polls=polls, voted=voted, results=results)
+
+
+@app.route("/polls/<int:poll_id>/vote", methods=["POST"])
+@login_required
+def vote_poll(poll_id):
+    poll = db.session.get(Poll, poll_id)
+    if not poll or not poll.active:
+        abort(404)
+    if PollVote.query.filter_by(poll_id=poll.id, user_id=current_user.id).first():
+        flash("Вы уже проголосовали в этом опросе.", "warning")
+        return redirect(url_for("polls_page"))
+    try:
+        option_id = int(request.form.get("option_id", ""))
+    except ValueError:
+        abort(400)
+    option = PollOption.query.filter_by(id=option_id, poll_id=poll.id).first()
+    if not option:
+        abort(400)
+    db.session.add(PollVote(poll_id=poll.id, option_id=option.id, user_id=current_user.id))
+    db.session.commit()
+    flash("Ваш голос сохранён.", "success")
+    return redirect(url_for("polls_page"))
 
 @app.route("/admin/users/<int:user_id>/toggle", methods=["POST"])
 @admin_required
@@ -531,7 +708,7 @@ def export_csv():
     writer.writerow(["ФИО", "Номер пропуска", "Учебное заведение", "Группа", "Дата", "Время UTC", "Широта", "Долгота", "Точность GPS, м", "Статус"])
     records = Attendance.query.filter_by(attendance_date=chosen_date).order_by(Attendance.checked_at.asc()).all()
     for r in records:
-        writer.writerow([r.user.full_name, r.user.pass_number or "", r.user.educational_institution or "", r.user.group_name or "", r.attendance_date.isoformat(), r.checked_at.strftime("%H:%M:%S"), r.latitude, r.longitude, r.accuracy_m, r.status])
+        writer.writerow([r.user.full_name, r.pass_number or "", r.user.educational_institution or "", r.user.group_name or "", r.attendance_date.isoformat(), r.checked_at.strftime("%H:%M:%S"), r.latitude, r.longitude, r.accuracy_m, r.status])
     return Response("\ufeff" + output.getvalue(), mimetype="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f"attachment; filename=attendance_{chosen_date.isoformat()}.csv"})
 
@@ -582,6 +759,16 @@ def migrate_schema():
 with app.app_context():
     db.create_all()
     migrate_schema()
+    # Existing SQLite/PostgreSQL installs get the new per-check-in pass number column.
+    inspector = inspect(db.engine)
+    if "attendance" in inspector.get_table_names():
+        attendance_columns = {column["name"] for column in inspector.get_columns("attendance")}
+        if "pass_number" not in attendance_columns:
+            with db.engine.begin() as connection:
+                connection.execute(text("ALTER TABLE attendance ADD COLUMN pass_number VARCHAR(20) NOT NULL DEFAULT ''"))
+    if EducationalInstitution.query.count() == 0:
+        db.session.add_all([EducationalInstitution(name=name) for name in DEFAULT_INSTITUTIONS])
+        db.session.commit()
     create_initial_admin()
 
 

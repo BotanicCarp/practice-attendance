@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-heading admin-heading">
   <div><div class="eyebrow">ПАНЕЛЬ УПРАВЛЕНИЯ</div><h1>Посещаемость</h1><p class="muted">Отметки, фотографии пропусков и контроль практикантов за выбранный день.</p></div>
-  <div class="heading-actions"><a class="btn btn-outline" href="{{ url_for('export_csv', date=chosen_date.isoformat()) }}">Экспорт CSV ↓</a><a class="btn btn-primary" href="{{ url_for('admin_users') }}">＋ Добавить практиканта</a></div>
+  <div class="heading-actions"><a class="btn btn-outline" href="{{ url_for('admin_location') }}">📍 Место и карта</a><a class="btn btn-outline" href="{{ url_for('admin_polls') }}">Опросы</a><a class="btn btn-outline" href="{{ url_for('export_csv', date=chosen_date.isoformat()) }}">Экспорт CSV ↓</a><a class="btn btn-primary" href="{{ url_for('admin_users') }}">＋ Добавить практиканта</a></div>
 </div>
 <form class="filter-bar panel" method="get" action="{{ url_for('admin_dashboard') }}">
   <div class="filter-field"><label for="date">Дата папки</label><input id="date" type="date" name="date" value="{{ chosen_date.isoformat() }}"></div>
@@ -23,10 +23,10 @@
   <div class="pass-gallery">
     {% for r in records %}
     <article class="pass-card">
-      <a class="pass-photo-link" href="{{ url_for('attendance_photo_preview', attendance_id=r.id) }}" target="_blank" rel="noopener" aria-label="Открыть фото пропуска {{ r.user.pass_number or 'без номера' }}">
-        <img class="pass-photo" src="{{ url_for('attendance_photo_preview', attendance_id=r.id) }}" alt="Фото пропуска № {{ r.user.pass_number or 'не указан' }}" loading="lazy">
+      <a class="pass-photo-link" href="{{ url_for('attendance_photo_preview', attendance_id=r.id) }}" target="_blank" rel="noopener" aria-label="Открыть фото пропуска {{ r.pass_number or 'без номера' }}">
+        <img class="pass-photo" src="{{ url_for('attendance_photo_preview', attendance_id=r.id) }}" alt="Фото пропуска № {{ r.pass_number or 'не указан' }}" loading="lazy">
       </a>
-      <div class="pass-card-info"><div class="pass-number-label">ПРОПУСК №</div><div class="pass-number">{{ r.user.pass_number or 'Не указан' }}</div><strong class="pass-person">{{ r.user.full_name }}</strong><span class="pass-school">{{ r.user.educational_institution or 'Учебное заведение не указано' }}</span><div class="pass-meta"><span class="status-dot"></span>{{ r.checked_at.strftime('%H:%M:%S') }} <span class="muted">· {{ r.user.group_name or 'Без группы' }}</span></div></div>
+      <div class="pass-card-info"><div class="pass-number-label">ПРОПУСК №</div><div class="pass-number">{{ r.pass_number or 'Не указан' }}</div><strong class="pass-person">{{ r.user.full_name }}</strong><span class="pass-school">{{ r.user.educational_institution or 'Учебное заведение не указано' }}</span><div class="pass-meta"><span class="status-dot"></span>{{ r.checked_at.strftime('%H:%M:%S') }} <span class="muted">· {{ r.user.group_name or 'Без группы' }}</span></div></div>
       <div class="pass-card-actions"><a class="text-button" href="{{ url_for('attendance_photo', attendance_id=r.id) }}">Скачать фото ↓</a><span class="status-pill status-ok">{{ r.status }}</span></div>
     </article>
     {% endfor %}
@@ -37,7 +37,7 @@
   <div class="section-heading"><div><div class="section-label">ЖУРНАЛ</div><h2>Журнал посещаемости</h2></div><span class="count-chip">{{ records|length }} записей</span></div>
   {% if records %}
   <div class="table-wrap"><table><thead><tr><th>№ пропуска</th><th>ФИО практиканта</th><th>Учебное заведение</th><th>Группа</th><th>Время (UTC)</th><th>GPS</th><th>Статус</th><th>Фото</th></tr></thead><tbody>
-  {% for r in records %}<tr><td><span class="number-chip">{{ r.user.pass_number or '—' }}</span></td><td><div class="person-cell"><span class="table-avatar">{{ r.user.full_name[:1]|upper }}</span><strong>{{ r.user.full_name }}</strong></div></td><td class="school-cell">{{ r.user.educational_institution or '—' }}</td><td>{{ r.user.group_name or '—' }}</td><td class="time-cell">{{ r.checked_at.strftime('%H:%M:%S') }}</td><td>{{ '%.0f'|format(r.accuracy_m) }} м</td><td><span class="status-pill status-ok">{{ r.status }}</span></td><td><a class="table-link" href="{{ url_for('attendance_photo', attendance_id=r.id) }}">Скачать ↓</a></td></tr>{% endfor %}
+  {% for r in records %}<tr><td><span class="number-chip">{{ r.pass_number or '—' }}</span></td><td><div class="person-cell"><span class="table-avatar">{{ r.user.full_name[:1]|upper }}</span><strong>{{ r.user.full_name }}</strong></div></td><td class="school-cell">{{ r.user.educational_institution or '—' }}</td><td>{{ r.user.group_name or '—' }}</td><td class="time-cell">{{ r.checked_at.strftime('%H:%M:%S') }}</td><td>{{ '%.0f'|format(r.accuracy_m) }} м</td><td><span class="status-pill status-ok">{{ r.status }}</span></td><td><a class="table-link" href="{{ url_for('attendance_photo', attendance_id=r.id) }}">Скачать ↓</a></td></tr>{% endfor %}
   </tbody></table></div>
   {% else %}<div class="empty-state compact"><strong>Нет записей для выбранных фильтров</strong><p>Измените дату или сбросьте поиск.</p></div>{% endif %}
 </section>

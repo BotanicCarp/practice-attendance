@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Место практики и карта — ПрактикаКонтроль{% endblock %}
+{% block content %}
+<div class="page-heading"><div><div class="eyebrow">НАСТРОЙКИ МЕСТА</div><h1>Точка практики и карта</h1><p class="muted">Нажмите на карту, чтобы поставить точку практики. Метки практикантов показывают их последнее сохранённое место отметки, а не отслеживание в реальном времени.</p></div><a class="btn btn-outline" href="{{ url_for('admin_dashboard') }}">← К панели</a></div>
+<div class="map-settings-grid">
+<section class="panel"><div class="section-label">ТОЧКА ПРАКТИКИ</div><h2>Установить местоположение</h2><div id="practice-map" class="leaflet-map"></div><form method="post" class="stack-form map-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="form-grid-two"><div><label for="latitude">Широта</label><input id="latitude" name="latitude" value="{{ latitude }}" required inputmode="decimal" placeholder="Выберите на карте"></div><div><label for="longitude">Долгота</label><input id="longitude" name="longitude" value="{{ longitude }}" required inputmode="decimal" placeholder="Выберите на карте"></div></div><label for="radius_m">Разрешённый радиус, метров</label><input id="radius_m" name="radius_m" type="number" min="10" max="5000" value="{{ radius }}" required><button class="btn btn-primary" type="submit">Сохранить точку и радиус</button></form><p class="form-footnote">Координаты сохраняются в базе данных. Для постоянной работы сайта нужна постоянная база PostgreSQL.</p></section>
+<section class="panel"><div class="section-label">ПОСЛЕДНИЕ ОТМЕТКИ</div><h2>Практиканты на карте</h2><div id="students-map" class="leaflet-map"></div><p class="form-footnote">На карте отображаются последние координаты отметки каждого практиканта, для которого есть запись. Это не живая геолокация.</p><div class="map-student-list">{% if map_students %}{% for s in map_students %}<div class="map-student-row"><span class="table-avatar">{{ s.name[:1]|upper }}</span><div><strong>{{ s.name }}</strong><small>{{ s.institution }}{% if s.group %} · {{ s.group }}{% endif %}</small><small>Последняя отметка: {{ s.date }} {{ s.time }}</small></div></div>{% endfor %}{% else %}<div class="empty-state compact"><strong>Пока нет координат отметок</strong><p>Практиканты появятся здесь после первой отметки.</p></div>{% endif %}</div></section>
+</div>
+<script id="map-students-data" type="application/json">{{ map_students|tojson }}</script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+(() => {
+ if (!window.L) return;
+ const latInput=document.getElementById('latitude'), lonInput=document.getElementById('longitude');
+ const initialLat=Number(latInput.value), initialLon=Number(lonInput.value);
+ const hasPoint=latInput.value.trim()!=='' && lonInput.value.trim()!=='' && Number.isFinite(initialLat) && Number.isFinite(initialLon);
+ const start=hasPoint?[initialLat,initialLon]:[50.05,72.96];
+ const practiceMap=L.map('practice-map').setView(start,hasPoint?16:11);
+ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(practiceMap);
+ let marker=null;
+ function place(lat,lon){ if(marker) marker.setLatLng([lat,lon]); else marker=L.marker([lat,lon],{draggable:true}).addTo(practiceMap); latInput.value=lat.toFixed(7);lonInput.value=lon.toFixed(7); marker.on('dragend',e=>{const p=e.target.getLatLng();latInput.value=p.lat.toFixed(7);lonInput.value=p.lng.toFixed(7);}); }
+ if(hasPoint) place(initialLat,initialLon);
+ practiceMap.on('click',e=>place(e.latlng.lat,e.latlng.lng));
+ const people=JSON.parse(document.getElementById('map-students-data').textContent||'[]');
+ const studentMap=L.map('students-map').setView(start,hasPoint?13:6); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(studentMap);
+ const points=[]; people.forEach(p=>{if(Number.isFinite(Number(p.lat))&&Number.isFinite(Number(p.lon))){const m=L.marker([p.lat,p.lon]).addTo(studentMap);m.bindPopup('<strong>'+String(p.name).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))+'</strong><br>'+String(p.group||'')+'<br>'+String(p.date)+' '+String(p.time));points.push([p.lat,p.lon]);}}); if(points.length) studentMap.fitBounds(points,{padding:[20,20],maxZoom:14});
+})();
+</script>
+{% endblock %}

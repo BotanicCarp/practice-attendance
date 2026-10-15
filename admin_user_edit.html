@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Редактирование практиканта — ПрактикаКонтроль{% endblock %}
 {% block content %}
-<div class="page-heading"><div><div class="eyebrow">УПРАВЛЕНИЕ ДОСТУПОМ</div><h1>Данные практиканта</h1><p class="muted">Обновите учебное заведение или цифровой номер пропуска.</p></div><a class="btn btn-outline" href="{{ url_for('admin_users') }}">← К списку</a></div>
+<div class="page-heading"><div><div class="eyebrow">УПРАВЛЕНИЕ ДОСТУПОМ</div><h1>Данные практиканта</h1><p class="muted">Обновите профиль практиканта. Номер пропуска вводится при ежедневной отметке и здесь не хранится.</p></div><a class="btn btn-outline" href="{{ url_for('admin_users') }}">← К списку</a></div>
 <section class="panel edit-user-panel">
   <div class="profile-identity"><div class="profile-avatar">{{ user.full_name[:1]|upper }}</div><div><h3>{{ user.full_name }}</h3><p class="muted">Логин: {{ user.username }}</p></div></div>
   <form method="post" class="stack-form">
@@ -9,7 +9,6 @@
     <label for="full_name">ФИО практиканта <span class="required-mark">*</span></label><input id="full_name" name="full_name" value="{{ user.full_name }}" required maxlength="160">
     <label for="educational_institution">Учебное заведение <span class="required-mark">*</span></label><select id="educational_institution" name="educational_institution" required><option value="" disabled {% if not user.educational_institution %}selected{% endif %}>Выберите учебное заведение</option>{% for item in institutions %}<option value="{{ item }}" {% if user.educational_institution == item %}selected{% endif %}>{{ item }}</option>{% endfor %}</select>
     <label for="group_name">Группа</label><input id="group_name" name="group_name" value="{{ user.group_name or '' }}" maxlength="100" placeholder="Например, ИСА-26ск">
-    <label for="pass_number">Номер пропуска <span class="required-mark">*</span></label><input id="pass_number" name="pass_number" type="text" inputmode="numeric" pattern="[0-9]+" maxlength="20" value="{{ user.pass_number or '' }}" required>
     <button class="btn btn-primary btn-full" type="submit">Сохранить изменения</button>
   </form>
 </section>

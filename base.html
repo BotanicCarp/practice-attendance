@@ -12,8 +12,8 @@
   <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">П</span><span class="brand-name">Практика<span class="brand-muted">КОНТРОЛЬ</span></span></a>
   {% if current_user.is_authenticated %}
   <nav class="nav">
-    {% if current_user.role == 'admin' %}<a href="{{ url_for('admin_dashboard') }}">Панель управления</a><a href="{{ url_for('admin_users') }}">Практиканты</a>
-    {% else %}<a href="{{ url_for('student_dashboard') }}">Мой кабинет</a>{% endif %}
+    {% if current_user.role == 'admin' %}<a href="{{ url_for('admin_dashboard') }}">Панель управления</a><a href="{{ url_for('admin_users') }}">Практиканты</a><a href="{{ url_for('admin_location') }}">Карта и точка</a><a href="{{ url_for('admin_institutions') }}">Учебные заведения</a><a href="{{ url_for('admin_polls') }}">Опросы</a>
+    {% else %}<a href="{{ url_for('student_dashboard') }}">Мой кабинет</a><a href="{{ url_for('polls_page') }}">Опросы</a>{% endif %}
     <span class="nav-user"><span class="nav-avatar">{{ current_user.full_name[:1]|upper }}</span><span class="nav-user-text">{{ current_user.full_name }}<small>{{ 'Администратор' if current_user.role == 'admin' else (current_user.group_name or 'Практикант') }}</small></span></span>
     <form method="post" action="{{ url_for('logout') }}" class="logout-form"><button class="nav-logout" type="submit">Выйти ↗</button></form>
   </nav>
