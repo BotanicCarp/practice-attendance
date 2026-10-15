@@ -7,24 +7,68 @@
 <section class="panel"><div class="section-label">ПОСЛЕДНИЕ ОТМЕТКИ</div><h2>Практиканты на карте</h2><div id="students-map" class="leaflet-map"></div><p class="form-footnote">На карте отображаются последние координаты отметки каждого практиканта, для которого есть запись. Это не живая геолокация.</p><div class="map-student-list">{% if map_students %}{% for s in map_students %}<div class="map-student-row"><span class="table-avatar">{{ s.name[:1]|upper }}</span><div><strong>{{ s.name }}</strong><small>{{ s.institution }}{% if s.group %} · {{ s.group }}{% endif %}</small><small>Последняя отметка: {{ s.date }} {{ s.time }}</small></div></div>{% endfor %}{% else %}<div class="empty-state compact"><strong>Пока нет координат отметок</strong><p>Практиканты появятся здесь после первой отметки.</p></div>{% endif %}</div></section>
 </div>
 <script id="map-students-data" type="application/json">{{ map_students|tojson }}</script>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+{% if yandex_maps_api_key %}
+<script src="https://api-maps.yandex.ru/2.1/?apikey={{ yandex_maps_api_key|urlencode }}&lang=ru_RU" type="text/javascript"></script>
 <script>
 (() => {
- if (!window.L) return;
- const latInput=document.getElementById('latitude'), lonInput=document.getElementById('longitude');
- const initialLat=Number(latInput.value), initialLon=Number(lonInput.value);
- const hasPoint=latInput.value.trim()!=='' && lonInput.value.trim()!=='' && Number.isFinite(initialLat) && Number.isFinite(initialLon);
- const start=hasPoint?[initialLat,initialLon]:[50.05,72.96];
- const practiceMap=L.map('practice-map').setView(start,hasPoint?16:11);
- L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(practiceMap);
- let marker=null;
- function place(lat,lon){ if(marker) marker.setLatLng([lat,lon]); else marker=L.marker([lat,lon],{draggable:true}).addTo(practiceMap); latInput.value=lat.toFixed(7);lonInput.value=lon.toFixed(7); marker.on('dragend',e=>{const p=e.target.getLatLng();latInput.value=p.lat.toFixed(7);lonInput.value=p.lng.toFixed(7);}); }
- if(hasPoint) place(initialLat,initialLon);
- practiceMap.on('click',e=>place(e.latlng.lat,e.latlng.lng));
- const people=JSON.parse(document.getElementById('map-students-data').textContent||'[]');
- const studentMap=L.map('students-map').setView(start,hasPoint?13:6); L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(studentMap);
- const points=[]; people.forEach(p=>{if(Number.isFinite(Number(p.lat))&&Number.isFinite(Number(p.lon))){const m=L.marker([p.lat,p.lon]).addTo(studentMap);m.bindPopup('<strong>'+String(p.name).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))+'</strong><br>'+String(p.group||'')+'<br>'+String(p.date)+' '+String(p.time));points.push([p.lat,p.lon]);}}); if(points.length) studentMap.fitBounds(points,{padding:[20,20],maxZoom:14});
+ const latInput = document.getElementById('latitude');
+ const lonInput = document.getElementById('longitude');
+ const people = JSON.parse(document.getElementById('map-students-data').textContent || '[]');
+ const initialLat = Number(latInput.value), initialLon = Number(lonInput.value);
+ const hasPoint = latInput.value.trim() !== '' && lonInput.value.trim() !== '' && Number.isFinite(initialLat) && Number.isFinite(initialLon);
+ const defaultCenter = [50.05, 72.96]; // Темиртау / Караганда area
+ const start = hasPoint ? [initialLat, initialLon] : defaultCenter;
+ const radiusInput = document.getElementById('radius_m');
+
+ ymaps.ready(() => {
+   const practiceMap = new ymaps.Map('practice-map', {
+     center: start, zoom: hasPoint ? 16 : 11, controls: ['zoomControl', 'searchControl', 'typeSelector', 'fullscreenControl']
+   });
+   let marker = null, circle = null;
+   const syncRadius = () => {
+     if (circle) circle.geometry.setRadius(Math.max(10, Number(radiusInput.value) || 100));
+   };
+   function place(lat, lon) {
+     const coords = [lat, lon];
+     latInput.value = Number(lat).toFixed(7); lonInput.value = Number(lon).toFixed(7);
+     if (!marker) {
+       marker = new ymaps.Placemark(coords, { iconCaption: 'Место практики' }, { draggable: true, preset: 'islands#blueDotIconWithCaption' });
+       marker.events.add('dragend', () => {
+         const p = marker.geometry.getCoordinates(); latInput.value = p[0].toFixed(7); lonInput.value = p[1].toFixed(7);
+         if (circle) circle.geometry.setCoordinates(p);
+       });
+       practiceMap.geoObjects.add(marker);
+       circle = new ymaps.Circle([coords, Math.max(10, Number(radiusInput.value) || 100)], {}, { fillColor: '#2878ff22', strokeColor: '#2878ff', strokeOpacity: 0.85, strokeWidth: 2 });
+       practiceMap.geoObjects.add(circle);
+     } else {
+       marker.geometry.setCoordinates(coords); if (circle) circle.geometry.setCoordinates(coords);
+     }
+     syncRadius();
+   }
+   if (hasPoint) place(initialLat, initialLon);
+   practiceMap.events.add('click', e => { const p = e.get('coords'); place(p[0], p[1]); });
+   radiusInput.addEventListener('input', syncRadius);
+
+   const studentMap = new ymaps.Map('students-map', {
+     center: start, zoom: hasPoint ? 12 : 6, controls: ['zoomControl', 'searchControl', 'typeSelector', 'fullscreenControl']
+   });
+   const points = [];
+   people.forEach(p => {
+     const lat = Number(p.lat), lon = Number(p.lon);
+     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+     const mark = new ymaps.Placemark([lat, lon], {
+       balloonContentHeader: String(p.name || 'Практикант'),
+       balloonContentBody: [String(p.institution || ''), String(p.group || ''), 'Последняя отметка: ' + String(p.date || '') + ' ' + String(p.time || '')].filter(Boolean).join('<br>'),
+       iconCaption: String(p.name || 'Практикант')
+     }, { preset: 'islands#blueCircleDotIconWithCaption' });
+     studentMap.geoObjects.add(mark); points.push([lat, lon]);
+   });
+   if (points.length === 1) studentMap.setCenter(points[0], 15);
+   else if (points.length > 1) studentMap.setBounds(studentMap.geoObjects.getBounds(), { checkZoomRange: true, zoomMargin: 30 });
+ });
 })();
 </script>
+{% else %}
+<div class="notice notice-warning" style="margin-top:12px">Для новой карты нужно добавить ключ Яндекс Карт в Vercel: <code>YANDEX_MAPS_API_KEY</code>. Пока ключ не настроен, карта не загружается.</div>
+{% endif %}
 {% endblock %}

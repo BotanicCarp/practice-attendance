@@ -28,6 +28,7 @@ app = Flask(__name__, template_folder=str(ROOT), static_folder=None)
 # Never use a predictable fallback.  A missing key is acceptable only for a
 # local, ephemeral session; production deployments must provide SECRET_KEY.
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY") or secrets.token_urlsafe(48)
+app.config["YANDEX_MAPS_API_KEY"] = os.getenv("YANDEX_MAPS_API_KEY", "").strip()
 default_db_path = Path("/tmp/practice-attendance.db") if IS_VERCEL else (ROOT / "attendance.db")
 db_url = os.getenv("DATABASE_URL", f"sqlite:///{default_db_path.as_posix()}")
 if db_url.startswith("postgres://"):
@@ -583,7 +584,7 @@ def admin_location():
     map_students = [{"name": r.user.full_name, "group": r.user.group_name or "", "lat": r.latitude,
                      "lon": r.longitude, "date": r.attendance_date.isoformat(), "time": r.checked_at.strftime("%H:%M:%S"),
                      "institution": r.user.educational_institution or ""} for r in latest_by_user.values()]
-    return render_template("admin_location.html", latitude=lat, longitude=lon, radius=radius, map_students=map_students)
+    return render_template("admin_location.html", latitude=lat, longitude=lon, radius=radius, map_students=map_students, yandex_maps_api_key=app.config["YANDEX_MAPS_API_KEY"])
 
 
 @app.route("/admin/polls", methods=["GET", "POST"])
