@@ -29,11 +29,17 @@ app = Flask(__name__, template_folder=str(ROOT), static_folder=None)
 # local, ephemeral session; production deployments must provide SECRET_KEY.
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY") or secrets.token_urlsafe(48)
 default_db_path = Path("/tmp/practice-attendance.db") if IS_VERCEL else (ROOT / "attendance.db")
-db_url = os.getenv("DATABASE_URL", f"sqlite:///{default_db_path.as_posix()}")
+db_url = os.getenv("DATABASE_URL", f"sqlite:///{default_db_path.as_posix()}").strip()
+# Vercel/Supabase connection variables often use postgres:// or postgresql://.
+# This project installs psycopg v3 (psycopg[binary]), so explicitly select its
+# SQLAlchemy dialect instead of relying on the uninstalled psycopg2 driver.
 if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+    db_url = "postgresql+psycopg://" + db_url[len("postgres://"):]
+elif db_url.startswith("postgresql://"):
+    db_url = "postgresql+psycopg://" + db_url[len("postgresql://"):]
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 app.config["UPLOAD_FOLDER"] = str(UPLOAD_DIR)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
