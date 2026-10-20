@@ -29,7 +29,15 @@ app = Flask(__name__, template_folder=str(ROOT), static_folder=None)
 # local, ephemeral session; production deployments must provide SECRET_KEY.
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY") or secrets.token_urlsafe(48)
 default_db_path = Path("/tmp/practice-attendance.db") if IS_VERCEL else (ROOT / "attendance.db")
-db_url = os.getenv("DATABASE_URL", f"sqlite:///{default_db_path.as_posix()}").strip()
+# Vercel's Supabase integration creates POSTGRES_URL_NON_POOLING / POSTGRES_URL.
+# Prefer an explicitly configured DATABASE_URL only when it is non-empty; otherwise
+# use the integration-provided direct PostgreSQL URL. Never stringify a missing value.
+db_url = (
+    os.getenv("DATABASE_URL", "").strip()
+    or os.getenv("POSTGRES_URL_NON_POOLING", "").strip()
+    or os.getenv("POSTGRES_URL", "").strip()
+    or f"sqlite:///{default_db_path.as_posix()}"
+)
 # Vercel/Supabase connection variables often use postgres:// or postgresql://.
 # This project installs psycopg v3 (psycopg[binary]), so explicitly select its
 # SQLAlchemy dialect instead of relying on the uninstalled psycopg2 driver.
@@ -37,6 +45,12 @@ if db_url.startswith("postgres://"):
     db_url = "postgresql+psycopg://" + db_url[len("postgres://"):]
 elif db_url.startswith("postgresql://"):
     db_url = "postgresql+psycopg://" + db_url[len("postgresql://"):]
+# Give a clear startup error when the environment value is a placeholder or malformed.
+if IS_VERCEL and not db_url.startswith(("postgresql+psycopg://", "sqlite:///")):
+    raise RuntimeError(
+        "Database URL is invalid. Configure DATABASE_URL or POSTGRES_URL_NON_POOLING "
+        "with the full PostgreSQL connection URI from Supabase."
+    )
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
